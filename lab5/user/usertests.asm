@@ -3698,7 +3698,7 @@ static inline uint64
 r_sp()
 {
   uint64 x;
-  asm volatile("mv %0, sp" : "=r" (x) );
+  asm volatile("mv %0, sp" : "=r"(x));
     2374:	870a                	mv	a4,sp
     printf("%s: stacktest: read below stack %p\n", s, *sp);
     2376:	77fd                	lui	a5,0xfffff
