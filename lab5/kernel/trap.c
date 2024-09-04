@@ -8,6 +8,7 @@
 
 struct spinlock tickslock;
 uint ticks;
+extern int ref_count[];
 
 extern char trampoline[], uservec[], userret[];
 
@@ -34,8 +35,7 @@ void trapinithart(void)
 void usertrap(void)
 {
   int which_dev = 0;
-  uint64 va = r_stval();
-  pte_t *pte;
+
   if ((r_sstatus() & SSTATUS_SPP) != 0)
     panic("usertrap: not from user mode");
 
@@ -67,30 +67,47 @@ void usertrap(void)
   }
   else if (r_scause() == 15)
   {
-    if ((pte = walk(p->pagetable, va, 0)) == 0)
+    // page fault
+    uint64 va = PGROUNDDOWN(r_stval());
+    pte_t *pte;
+
+    if ((pte = walk(p->pagetable, va, 0)) == 0 || !(*pte & PTE_V))
     {
-      panic("usertrap: walk...");
+      printf("usertrap: page not present\n");
+      p->killed = 1;
     }
-    printf("Page fault detected!\n");
-    if ((*pte & PTE_V) && (*pte & PTE_COW) && !(*pte & PTE_W))
+    else if ((*pte & PTE_COW) && !(*pte & PTE_W))
     {
-      printf("COW page fault at va 0x%p", va);
-      // new page allocation
+      printf("COW page fault at va 0x%p\n", va);
+      uint64 pa = PTE2PA(*pte);
+      uint flags = PTE_FLAGS(*pte);
+
       void *new_page = kalloc();
       if (new_page == 0)
       {
-        // 內存分配失敗
         printf("COW: kalloc failed\n");
         p->killed = 1;
-        return;
       }
+      else
+      {
+        memmove(new_page, (void *)pa, PGSIZE);
+        flags = (flags | PTE_W) & ~PTE_COW;
+        uint64 new_pa = (uint64)new_page;
+        *pte = PA2PTE(new_pa) | flags;
 
-      uint64 pa = PTE2PA(*pte);
-      memmove(new_page, (void *)pa, 4096); // from pa copy address to new_page
+        // Decrease reference count of the old page
+        int index = REFCOUNT_INDEX(pa);
+        if (ref_count[index] > 0)
+          ref_count[index]--;
+        if (ref_count[index] == 0)
+          kfree((void *)pa);
+
+        sfence_vma();
+      }
     }
     else
     {
-      printf("Non - COW page fault at 0x%p ", va);
+      printf("Non-COW page fault at 0x%p\n", va);
       p->killed = 1;
     }
   }

@@ -6,6 +6,7 @@
 #include "defs.h"
 #include "fs.h"
 #include "proc.h"
+
 /*
  * the kernel's page table.
  */
@@ -14,7 +15,7 @@ pagetable_t kernel_pagetable;
 extern char etext[]; // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
-
+extern int ref_count[];
 // Make a direct-map page table for the kernel.
 pagetable_t
 kvmmake(void)
@@ -309,10 +310,9 @@ int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  //struct proc *p = myproc();
-  //uint64 va = r_stval(); // get page fault address
-  char *mem;
-  
+  // struct proc *p = myproc();
+  // uint64 va = r_stval(); // get page fault address
+  // char *mem;
 
   for (i = 0; i < sz; i += PGSIZE)
   {
@@ -325,14 +325,22 @@ int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     flags = flags & ~PTE_W;
     flags = flags | PTE_COW;
 
-    *pte = PA2PTE(pa) | flags; // updated for father's pte
-    
+    int index = REFCOUNT_INDEX(pa);
+    if (index >= 0 && index < REFCOUNT_SIZE)
+    {
+      ref_count[index]++;
+    }
+    else
+    {
+      goto err;
+    }
 
     if (mappages(new, i, PGSIZE, pa, flags) != 0)
     {
-      kfree(mem);
+      ref_count[index]--;
       goto err;
     }
+    *pte = PA2PTE(pa) | flags; // updated for father's pte
   }
   return 0;
 
